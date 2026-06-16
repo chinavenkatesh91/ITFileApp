@@ -24,8 +24,9 @@ export function parseNumberValue(text: string): number {
 function extractValueForPattern(text: string, pattern: RegExp): number {
   const matches = text.match(pattern);
   if (!matches) return 0;
-  // Get the segment with the number, parse it
-  return parseNumberValue(matches[0]);
+  // Use the captured group if defined (so we avoid numbers in the label part), otherwise fallback to full match
+  const valueText = matches[1] !== undefined ? matches[1] : matches[0];
+  return parseNumberValue(valueText);
 }
 
 export interface ParsedDocumentResult {
@@ -42,6 +43,9 @@ export interface ParsedDocumentResult {
     }
   };
   rawTextAnalyzed: string;
+  pan?: string;
+  assessmentYear?: string;
+  employeeName?: string;
 }
 
 // Parse Natural Language inputs
@@ -263,6 +267,15 @@ Annual equivalent:                              Rs. 4,20,000
 Municipal Tax paid by Landlord:                Rs. 15,000`
 };
 
+// Extract value trying multiple patterns, returning the first non-zero match
+function extractValueForPatterns(text: string, patterns: RegExp[]): number {
+  for (const pattern of patterns) {
+    const value = extractValueForPattern(text, pattern);
+    if (value > 0) return value;
+  }
+  return 0;
+}
+
 // Parser for simulated documents
 export function parseDocumentContent(fileName: string, content: string): ParsedDocumentResult {
   const lowerContent = content.toLowerCase();
@@ -273,19 +286,83 @@ export function parseDocumentContent(fileName: string, content: string): ParsedD
     rawTextAnalyzed: content
   };
 
-  if (lowerContent.includes('form 16') || fileName.toLowerCase().includes('form16') || lowerContent.includes('employer name')) {
+  const isForm16 = 
+    fileName.toLowerCase().includes('form16') ||
+    fileName.toLowerCase().includes('form-16') ||
+    fileName.toLowerCase().includes('form_16') ||
+    lowerContent.includes('form 16') ||
+    lowerContent.includes('form no. 16') ||
+    lowerContent.includes('form no.16') ||
+    lowerContent.includes('section 203') ||
+    (lowerContent.includes('employer') && lowerContent.includes('employee') && lowerContent.includes('salary')) ||
+    (lowerContent.includes('section 17(1)') && lowerContent.includes('assessment year'));
+
+  if (isForm16) {
     result.detectedCategory = 'salaried';
     result.documentType = 'Form 16 (Salaried Certificate)';
     
-    // Extract Salary
-    const grossSalary = extractValueForPattern(lowerContent, /(?:gross salary under section 17\(1\)|total gross salary)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/);
-    // Extract HRA
-    const hra = extractValueForPattern(lowerContent, /(?:house rent allowance u\/s 10\(13a\)|hra)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/);
-    // Extract 80C
-    const c80 = extractValueForPattern(lowerContent, /(?:section 80c|80c)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/);
-    // Extract 80D
-    const d80 = extractValueForPattern(lowerContent, /(?:section 80d|80d)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/);
+    // Extract Salary using multiple pattern options
+    const grossSalary = extractValueForPatterns(lowerContent, [
+      /(?:gross salary under section 17\(1\)|total gross salary)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /provisions contained in section 17\(1\)\s*\(a\)\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /provisions contained in section 17\(1\)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /gross salary u\/s 17\(1\)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /salary u\/s 17\(1\)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /section 17\(1\)\s*\(a\)\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /\(d\)\s*total\s+(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /total amount of salary received from current employer\s*\[1\(d\)-2\(i\)\]\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /gross salary(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /section 17\(1\)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+    ]);
     
+    // Extract HRA using multiple pattern options
+    const hra = extractValueForPatterns(lowerContent, [
+      /(?:house rent allowance u\/s 10\(13a\)|house rent allowance under section 10\(13a\)|hra u\/s 10\(13a\))(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /house rent allowance(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /hra(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+    ]);
+    
+    // Extract 80C using multiple pattern options
+    const value80C = extractValueForPatterns(lowerContent, [
+      /(?:section 80c|80c|deduction u\/s 80c|deduction under section 80c)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /provident fund(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /ppf(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+    ]);
+    const value80CCD1 = extractValueForPattern(lowerContent, /section 80ccd\s*\(1\)\s*(\d+(?:,\d+)*(?:\.\d+)?)/);
+    
+    // Sum u/s 80C + 80CCD(1), capped at 1.5L for Section 80CCE limit in simulator
+    let c80 = Math.min(150000, value80C + value80CCD1);
+    
+    // Fallback: Aggregate Chapter VI-A deductible amount if c80 is still 0
+    if (c80 === 0) {
+      c80 = extractValueForPattern(lowerContent, /aggregate of deductible amount under chapter vi-a.*?(\d+(?:,\d+)*(?:\.\d+)?)/);
+    }
+    
+    // Extract 80D using multiple pattern options
+    const d80 = extractValueForPatterns(lowerContent, [
+      /(?:section 80d|80d|deduction u\/s 80d|deduction under section 80d)(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /health insurance(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+      /medical insurance(?:\s*[:=]|\s+rs\.)?\s*(\d+(?:,\d+)*(?:\.\d+)?)/,
+    ]);
+    
+    // Extract metadata
+    const panMatch = content.match(/[a-z]{5}\d{4}[a-z]/i);
+    const ayMatch = content.match(/assessment year\s*(\d{4}-\d{2,4})/i);
+    const nameMatch = content.match(/(?:name of the employee|employee name|name of employee|name of assessee)(?:\s*and address)?\s*[:=]?\s*([a-z\s\.]{3,35})/i);
+    
+    let name = nameMatch ? nameMatch[1].trim() : undefined;
+    if (!name && fileName) {
+      const cleanFileName = fileName.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      const namePart = cleanFileName.match(/^[a-z\s]+/i);
+      if (namePart) {
+        name = namePart[0].trim();
+      }
+    }
+
+    result.pan = panMatch ? panMatch[0].toUpperCase() : undefined;
+    result.assessmentYear = ayMatch ? ayMatch[1] : undefined;
+    result.employeeName = name;
+
     result.extractedData = {
       sector: 'salaried',
       salaryIncome: grossSalary || 0,

@@ -7,6 +7,56 @@ interface DocParserProps {
   onLoadIntoSimulator: (parsedData: Partial<TaxInput>) => void;
 }
 
+const loadPdfJs = (): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    // @ts-ignore
+    if (window.pdfjsLib) {
+      // @ts-ignore
+      resolve(window.pdfjsLib);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.async = true;
+    script.onload = () => {
+      // @ts-ignore
+      if (window.pdfjsLib) {
+        // @ts-ignore
+        resolve(window.pdfjsLib);
+      } else {
+        reject(new Error('PDF.js loaded but window.pdfjsLib was not found.'));
+      }
+    };
+    script.onerror = () => reject(new Error('Failed to load PDF.js from CDN.'));
+    document.head.appendChild(script);
+  });
+};
+
+const parsePdfFile = async (file: File): Promise<string> => {
+  const pdfjsLib = await loadPdfJs();
+  const arrayBuffer = await file.arrayBuffer();
+
+  // Configure worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+  let fullText = '';
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    // Join text items
+    const pageText = textContent.items
+      // @ts-ignore
+      .map((item) => item.str)
+      .join(' ');
+    fullText += pageText + '\n';
+  }
+
+  return fullText;
+};
+
 export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => {
   const [inputText, setInputText] = useState<string>('');
   const [selectedDocTemplate, setSelectedDocTemplate] = useState<keyof typeof SAMPLE_DOCUMENTS | null>(null);
@@ -19,6 +69,8 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
 
   // Drag and drop / file selection state
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [isParsing, setIsParsing] = useState<boolean>(false);
+  const [parseError, setParseError] = useState<string | null>(null);
 
   const handleTextAnalyze = () => {
     if (!inputText.trim()) return;
@@ -31,6 +83,7 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
     setSelectedDocTemplate(key);
     setInputText(SAMPLE_DOCUMENTS[key]);
     setUploadedFileName(`${key.toUpperCase()}_Simulated_Report.txt`);
+    setParseError(null);
     
     // Parse immediately
     const parsedDoc = parseDocumentContent(`${key}.txt`, SAMPLE_DOCUMENTS[key]);
@@ -38,22 +91,39 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
     setParseResult(null);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadedFileName(file.name);
+    setParseError(null);
+    setIsParsing(true);
     
-    // Read local files
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setInputText(content);
-      const parsedDoc = parseDocumentContent(file.name, content);
-      setDocResult(parsedDoc);
-      setParseResult(null);
-    };
-    reader.readAsText(file);
+    try {
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        const content = await parsePdfFile(file);
+        setInputText(content);
+        const parsedDoc = parseDocumentContent(file.name, content);
+        setDocResult(parsedDoc);
+        setParseResult(null);
+      } else {
+        // Read local files
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const content = event.target?.result as string;
+          setInputText(content);
+          const parsedDoc = parseDocumentContent(file.name, content);
+          setDocResult(parsedDoc);
+          setParseResult(null);
+        };
+        reader.readAsText(file);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setParseError(err.message || 'Failed to extract text from PDF. Make sure the file is not password-protected.');
+    } finally {
+      setIsParsing(false);
+    }
   };
 
   const handleLoadIntoSimulator = () => {
@@ -80,6 +150,7 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
               setDocResult(null);
               setSelectedDocTemplate(null);
               setUploadedFileName('');
+              setParseError(null);
             }}
             className={`btn ${parsingMode === 'text' ? 'btn-primary' : 'btn-secondary'}`}
             style={{ flex: 1 }}
@@ -94,6 +165,7 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
               setDocResult(null);
               setSelectedDocTemplate(null);
               setUploadedFileName('');
+              setParseError(null);
             }}
             className={`btn ${parsingMode === 'document' ? 'btn-primary' : 'btn-secondary'}`}
             style={{ flex: 1 }}
@@ -180,23 +252,57 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
                 <p style={{ fontSize: '0.85rem' }}>Upload Form 16, Form 26AS, GST portal ledger outputs, or rental receipts.</p>
               </div>
 
+              {parseError && (
+                <div className="alert-warning-box" style={{ borderColor: 'var(--danger)', color: 'var(--danger)', background: 'rgba(239, 68, 68, 0.08)', marginBottom: '16px' }}>
+                  <AlertCircle size={16} className="alert-warning-icon" style={{ color: 'var(--danger)' }} />
+                  <div>
+                    <p style={{ fontWeight: 600 }}>Parsing Error</p>
+                    <p style={{ fontSize: '0.8rem', marginTop: '2px' }}>{parseError}</p>
+                  </div>
+                </div>
+              )}
+
               <div 
                 className="upload-container"
-                onClick={() => document.getElementById('file-upload-input')?.click()}
+                onClick={() => !isParsing && document.getElementById('file-upload-input')?.click()}
+                style={{ opacity: isParsing ? 0.7 : 1, cursor: isParsing ? 'not-allowed' : 'pointer' }}
               >
-                <Upload size={36} className="upload-icon" style={{ margin: '0 auto 10px' }} />
-                <p style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '4px' }}>
-                  {uploadedFileName ? `Selected: ${uploadedFileName}` : 'Drag & drop your files here or browse'}
-                </p>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Supports PDF, TXT, CSV, JSON
-                </p>
+                {isParsing ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0' }}>
+                    <div className="spinner" style={{
+                      width: '36px',
+                      height: '36px',
+                      border: '3px solid rgba(255,255,255,0.1)',
+                      borderTop: '3px solid var(--color-primary)',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite',
+                      marginBottom: '12px'
+                    }} />
+                    <p style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                      Extracting text from PDF...
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Using client-side PDF parser engine
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <Upload size={36} className="upload-icon" style={{ margin: '0 auto 10px' }} />
+                    <p style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '4px' }}>
+                      {uploadedFileName ? `Selected: ${uploadedFileName}` : 'Drag & drop your files here or browse'}
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      Supports PDF, TXT, CSV, JSON
+                    </p>
+                  </>
+                )}
                 <input
                   id="file-upload-input"
                   type="file"
                   style={{ display: 'none' }}
                   accept=".txt,.pdf,.csv,.json"
                   onChange={handleFileUpload}
+                  disabled={isParsing}
                 />
               </div>
 
@@ -257,7 +363,10 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
                 fontSize: '0.75rem', 
                 overflowX: 'auto',
                 maxHeight: '160px',
-                color: 'var(--text-secondary)'
+                color: 'var(--text-secondary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxWidth: '100%'
               }}>
                 {inputText}
               </pre>
@@ -300,6 +409,42 @@ export const DocParser: React.FC<DocParserProps> = ({ onLoadIntoSimulator }) => 
                   </div>
                 </div>
               </div>
+
+              {/* Extracted Metadata Card */}
+              {docResult && (docResult.employeeName || docResult.pan || docResult.assessmentYear) && (
+                <div style={{ 
+                  background: 'rgba(99, 102, 241, 0.05)', 
+                  border: '1px solid rgba(99, 102, 241, 0.2)', 
+                  borderRadius: '8px', 
+                  padding: '12px',
+                  fontSize: '0.8rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px'
+                }}>
+                  <div style={{ fontWeight: 600, color: 'var(--color-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>
+                    Document Metadata
+                  </div>
+                  {docResult.employeeName && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Assessee Name:</span>
+                      <strong style={{ color: 'var(--text-primary)', textAlign: 'right' }}>{docResult.employeeName}</strong>
+                    </div>
+                  )}
+                  {docResult.pan && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>PAN:</span>
+                      <strong style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>{docResult.pan}</strong>
+                    </div>
+                  )}
+                  {docResult.assessmentYear && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Assessment Year:</span>
+                      <strong style={{ color: 'var(--text-primary)' }}>{docResult.assessmentYear}</strong>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Parsed Variables List */}
               <div style={{ background: 'rgba(8, 12, 20, 0.4)', borderRadius: '8px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>

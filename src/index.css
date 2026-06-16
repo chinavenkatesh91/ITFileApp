@@ -128,6 +128,7 @@ body {
 .nav-links {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .nav-tab {
@@ -170,6 +171,11 @@ body {
   display: grid;
   grid-template-columns: 1fr 400px;
   gap: 24px;
+  width: 100%;
+}
+
+.dashboard-grid > * {
+  min-width: 0;
 }
 
 @media (max-width: 1200px) {
@@ -684,3 +690,63 @@ body {
 .sector-tag.trading { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 .sector-tag.agriculture { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
 .sector-tag.exempt { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+
+/* Spinner Keyframes and class */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  display: inline-block;
+}
+
+/* Mobile Responsiveness Improvements */
+@media (max-width: 768px) {
+  .app-header {
+    padding: 16px 20px;
+    flex-direction: column;
+    gap: 16px;
+    align-items: center;
+    text-align: center;
+  }
+  
+  .nav-links {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .nav-tab {
+    font-size: 0.85rem;
+    padding: 6px 12px;
+  }
+
+  .app-main {
+    padding: 20px 16px;
+  }
+  
+  .view-header {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .upload-container {
+    padding: 20px 15px;
+  }
+  
+  .sample-docs-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  footer {
+    padding: 20px 16px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .sample-docs-grid {
+    grid-template-columns: 1fr;
+  }
+}

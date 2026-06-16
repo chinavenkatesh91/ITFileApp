@@ -1,0 +1,14 @@
+# Workspace Rules
+
+This file outlines the development rules and conventions for the ITFileApp workspace.
+
+## Responsive UI Rules
+
+1. **Window-Fitting & Prevent Layout Stretching**:
+   - Any UI components or changes made must fit within the window width. No horizontal page overflow is allowed.
+   - Grid layouts (such as `.dashboard-grid`) must have `width: 100%` set and reset minimum item sizes via `.grid-container > * { min-width: 0; }`. This prevents content (like charts, tables, raw code, or logs) from stretching the columns beyond the screen boundaries.
+   - HTML elements rendering long logs or text (such as `<pre>` tags) must incorporate `white-space: pre-wrap;`, `word-break: break-word;`, and `max-width: 100%;` to wrap lines cleanly and avoid layout overflow.
+
+2. **Device Responsiveness**:
+   - Flex containers representing lists or navigation tabs (e.g. `.nav-links`) must use `flex-wrap: wrap` to flow gracefully on small screens.
+   - Use standard CSS media queries for tablets (`max-width: 768px`) and mobile screens (`max-width: 480px`) to scale down grid columns, padding sizes, and layout widths so they look elegant on all physical form factors.
